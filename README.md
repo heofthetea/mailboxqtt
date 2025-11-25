@@ -1,6 +1,7 @@
 # mailboxqtt
-A primitive MQTT broker written entirely from scratch in rust.
+A primitive MQTT 3.1.1 broker written entirely from scratch in rust.
 Created as part of an IoT lecture at DHBW.
+(I couldn't be bothered implementing MQTT 5 because too complicated)
 
 ## feature set
 - [x] Threading for non-blocking connections
