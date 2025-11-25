@@ -8,7 +8,7 @@ mod protocol;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    println!("Starting MQTT broker on 127.0.0.1:1883");
+    println!("Starting mailboxqtt broker on 127.0.0.1:1883");
 
     // Create one shared message queue for the entire broker
     let message_queue = MessageQueueHandle::start();

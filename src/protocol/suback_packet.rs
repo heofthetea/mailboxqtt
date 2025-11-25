@@ -1,5 +1,4 @@
-
-use super::{encode_remaining_length};
+use super::encode_remaining_length;
 
 /// MQTT SUBACK packet
 ///
@@ -81,7 +80,7 @@ mod tests {
     fn test_encode_suback_multiple() {
         let packet = SubackPacket {
             packet_id: 42,
-            return_codes: vec![0x00, 0x01, 0x80]
+            return_codes: vec![0x00, 0x01, 0x80],
         };
         let encoded = packet.encode();
 

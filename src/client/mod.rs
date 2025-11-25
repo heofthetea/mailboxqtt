@@ -1,9 +1,11 @@
 pub mod tcp_writer;
 
+use std::time::Duration;
+
 use tokio::{
     io::{self, AsyncReadExt},
     net::{TcpStream, tcp::OwnedReadHalf},
-    sync::mpsc,
+    sync::mpsc, time::timeout,
 };
 
 use crate::{
@@ -57,21 +59,17 @@ impl Client {
         let (mut reader, writer_half) = tcp_stream.into_split();
 
         // Read the CONNECT packet first
-        let connect_packet = Self::read_connect(&mut reader).await?;
+        let connect_packet = ConnectPacket::read_from_stream(&mut reader).await?;
         let client_id = connect_packet.client_id.clone();
 
-        // Create writer actor
         let writer = TcpWriterHandle::start(writer_half);
 
         // Send CONNACK
         writer
             .write_packet(&messages::CONNACK)
             .map_err(|e| io::Error::other(e))?;
-
-        // Create command channel
         let (tx, rx) = mpsc::unbounded_channel();
 
-        // Create the client
         let client = Client {
             client_id: client_id.clone(),
             reader,
@@ -81,33 +79,29 @@ impl Client {
             _sender: tx.clone(),
         };
 
-        // Clone client_id before moving client into the task
+        // Sometimes ownership is a pain, the client is moved into the tokio task
+        // and so we need to clone this _again_
         let client_id_for_spawn = client.client_id.clone();
 
-        // Spawn the client's event loop
+        // Start the client's event loop
         tokio::spawn(async move {
             if let Err(e) = client.run().await {
                 eprintln!("Client {} error: {:?}", client_id_for_spawn, e);
             }
         });
 
-        // Return the handle
         Ok(ClientHandle {
             client_id,
             sender: tx,
         })
     }
 
-    /// Read the initial CONNECT packet
-    async fn read_connect(reader: &mut OwnedReadHalf) -> io::Result<ConnectPacket> {
-        ConnectPacket::read_from_stream(reader).await
-    }
-
     /// Main event loop of the client
-    /// All taska are sent by the attached `ClientHandle` to `command_receiver`
+    /// Handles:
+    ///     - Outgoing connections (currently only for PUBLISH)
+    ///     - Incoming connections
+    /// in this order.
     async fn run(mut self) -> io::Result<()> {
-        use tokio::time::{timeout, Duration};
-
         loop {
             // Try to receive a command (non-blocking check)
             match self.receiver.try_recv() {
@@ -128,8 +122,8 @@ impl Client {
                 }
             }
 
-            // Polling: Read next packet from stream with a timeout
-            // Not sure how to do this better yet
+            // Polling for packets on the stream
+            // TODO not sure how to do this better yet, polling is not ideal
             match timeout(Duration::from_millis(100), self.read_next_packet()).await {
                 Ok(Ok(Some(()))) => continue,
                 Ok(Ok(None)) => {
@@ -152,6 +146,7 @@ impl Client {
 
     /// Read and handle the next packet from the client
     /// Returns Ok(Some(())) if packet was handled, Ok(None) if connection closed
+    /// and Err(_) when anything fails
     async fn read_next_packet(&mut self) -> io::Result<Option<()>> {
         // Read the first byte to determine packet type
         // The fixed header may contain more information based on the type of packet, so we retain it and pass it

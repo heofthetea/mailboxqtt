@@ -9,9 +9,10 @@ pub mod subscribe_packet;
 pub mod suback_packet;
 
 
-
-/// Helper function to read MQTT UTF-8 string (2-byte length prefix)
-async fn read_mqtt_string<R: AsyncReadExt + Unpin>(stream: &mut R) -> io::Result<String> {
+/// Read an mqtt utf8 string (2 bytes) from a stream
+/// mqtt first tells us how many characters the string will be (`len`), then we just read it into a buffer
+async fn read_utf8_string<R>(stream: &mut R) -> io::Result<String>
+where R: AsyncReadExt + Unpin {
     let len = stream.read_u16().await? as usize;
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
@@ -21,7 +22,7 @@ async fn read_mqtt_string<R: AsyncReadExt + Unpin>(stream: &mut R) -> io::Result
     })
 }
 
-/// Helper function to read the MQTT length encoding
+/// Read the MQTT length encoding
 #[allow(clippy::similar_names)]
 async fn read_remaining_length<R: AsyncReadExt + Unpin>(stream: &mut R) -> io::Result<usize> {
     let mut multiplier = 1;

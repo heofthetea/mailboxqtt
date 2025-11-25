@@ -1,5 +1,5 @@
 use tokio::io::{self, AsyncReadExt};
-use super::{read_mqtt_string, read_remaining_length};
+use super::{read_utf8_string, read_remaining_length};
 
 /// MQTT SUBSCRIBE packet
 ///
@@ -63,7 +63,7 @@ impl SubscribePacket {
         let mut bytes_read = 2; // Already read packet_id (2 bytes)
 
         while bytes_read < remaining_length {
-            let topic_filter = read_mqtt_string(stream).await?;
+            let topic_filter = read_utf8_string(stream).await?;
             bytes_read += 2 + topic_filter.len(); // 2 bytes length + topic bytes
 
             // Read requested QoS (1 byte)

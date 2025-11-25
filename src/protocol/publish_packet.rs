@@ -1,6 +1,6 @@
 use tokio::io::{self, AsyncReadExt};
 
-use super::{encode_remaining_length, read_mqtt_string, read_remaining_length};
+use super::{encode_remaining_length, read_utf8_string, read_remaining_length};
 
 /// MQTT PUBLISH packet
 ///
@@ -43,7 +43,7 @@ impl PublishPacket {
         let remaining_length = read_remaining_length(stream).await?;
 
         // Read topic name (length-prefixed UTF-8 string)
-        let topic = read_mqtt_string(stream).await?;
+        let topic = read_utf8_string(stream).await?;
 
         // Read packet identifier (only for QoS 1 and 2)
         let packet_id = if qos > 0 {
