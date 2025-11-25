@@ -1,4 +1,6 @@
 use tokio::io::{self, AsyncReadExt};
+use crate::protocol::Packet;
+
 use super::{read_utf8_string, read_remaining_length};
 
 /// MQTT SUBSCRIBE packet
@@ -31,10 +33,10 @@ pub struct Subscription {
     pub qos: u8,
 }
 
-impl SubscribePacket {
+impl Packet for SubscribePacket {
     /// Read a SUBSCRIBE packet from a stream
     /// Assumes reading of the header has happened earlier (for matching the type field), and thus expects it to be passed.
-    pub async fn read_from_stream<R: AsyncReadExt + Unpin>(stream: &mut R, fixed_header: u8) -> io::Result<Self> {
+    async fn read<R: AsyncReadExt + Unpin>(stream: &mut R, fixed_header: u8) -> io::Result<Self> {
         let packet_type = fixed_header >> 4;
         if packet_type != 8 {
             return Err(io::Error::new(
@@ -97,6 +99,12 @@ impl SubscribePacket {
             subscriptions,
         })
     }
+
+    /// We shouldn't have to write a SUBSCRIBE packet
+    fn encode(&self) -> Vec<u8> {
+        unimplemented!()
+    }
+
 }
 
 #[cfg(test)]
@@ -118,7 +126,7 @@ mod tests {
 
         let mut cursor = Cursor::new(data);
         let header = cursor.read_u8().await.unwrap();
-        let packet = SubscribePacket::read_from_stream(&mut cursor, header).await.unwrap();
+        let packet = SubscribePacket::read(&mut cursor, header).await.unwrap();
 
         assert_eq!(packet.packet_id, 10);
         assert_eq!(packet.subscriptions.len(), 1);
@@ -143,7 +151,7 @@ mod tests {
 
         let mut cursor = Cursor::new(data);
         let header = cursor.read_u8().await.unwrap();
-        let packet = SubscribePacket::read_from_stream(&mut cursor, header).await.unwrap();
+        let packet = SubscribePacket::read(&mut cursor, header).await.unwrap();
 
         assert_eq!(packet.packet_id, 1);
         assert_eq!(packet.subscriptions.len(), 2);

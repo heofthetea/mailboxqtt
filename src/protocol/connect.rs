@@ -1,5 +1,7 @@
 use tokio::io::{self, AsyncReadExt};
 
+use crate::protocol::Packet;
+
 use super::{read_remaining_length, read_utf8_string};
 
 // todo: understand
@@ -14,12 +16,9 @@ pub struct ConnectPacket {
     // Add more fields as needed
 }
 
-impl ConnectPacket {
-    pub async fn read_from_stream<R: AsyncReadExt + Unpin>(stream: &mut R) -> io::Result<Self> {
-        // Read fixed header
-        let packet_type = stream.read_u8().await?;
-
-        if (packet_type >> 4) != 1 {
+impl Packet for ConnectPacket {
+    async fn read<R: AsyncReadExt + Unpin>(stream: &mut R, fixed_header: u8) -> io::Result<Self> {
+        if (fixed_header >> 4) != 1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Expected CONNECT packet",
@@ -44,4 +43,10 @@ impl ConnectPacket {
             keep_alive,
         })
     }
+
+    /// We shouldn't have to write a CONNECT packet
+    fn encode(&self) -> Vec<u8> {
+        unimplemented!()
+    }
+
 }

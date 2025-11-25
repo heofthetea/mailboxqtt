@@ -1,3 +1,5 @@
+use crate::protocol::Packet;
+
 use super::encode_remaining_length;
 
 /// MQTT SUBACK packet
@@ -30,9 +32,11 @@ impl SubackPacket {
             return_codes: vec![0x00; count],
         }
     }
+}
+impl Packet for SubackPacket {
 
     /// Encode the SUBACK packet to bytes for sending
-    pub fn encode(&self) -> Vec<u8> {
+    fn encode(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
 
         // Fixed header byte: packet type (9) + reserved flags (0000)
@@ -50,6 +54,15 @@ impl SubackPacket {
         buffer.extend_from_slice(&self.return_codes);
 
         buffer
+    }
+
+    /// We shouldn't have to read a SUBACK packet
+    #[allow(dead_code)]
+    async fn read<R>(_stream: &mut R, _fixed_header: u8) -> std::io::Result<Self>
+    where
+        R: tokio::io::AsyncReadExt + Unpin,
+        Self: Sized {
+            unimplemented!()
     }
 }
 

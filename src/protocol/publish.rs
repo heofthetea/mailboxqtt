@@ -1,6 +1,8 @@
 use tokio::io::{self, AsyncReadExt};
 
-use super::{encode_remaining_length, read_utf8_string, read_remaining_length};
+use crate::protocol::Packet;
+
+use super::{encode_remaining_length, read_remaining_length, read_utf8_string};
 
 /// MQTT PUBLISH packet
 ///
@@ -15,8 +17,7 @@ pub struct PublishPacket {
     pub topic: String,
     pub payload: Vec<u8>,
 
-    /// Quality of Service level (0, 1, or 2)
-    /// TODO For now, we always treat as QoS 0
+    /// Quality of Service level (for now only 0 and 1)
     pub qos: u8,
 
     /// Whether this is a retained message
@@ -31,9 +32,9 @@ pub struct PublishPacket {
     pub packet_id: Option<u16>,
 }
 
-impl PublishPacket {
+impl Packet for PublishPacket {
     /// Read a PUBLISH packet from a stream
-    pub async fn read_from_stream<R: AsyncReadExt + Unpin>(stream: &mut R, fixed_header: u8) -> io::Result<Self> {
+    async fn read<R: AsyncReadExt + Unpin>(stream: &mut R, fixed_header: u8) -> io::Result<Self> {
         // Parse flags from lower 4 bits
         let retain = (fixed_header & 0b0000_0001) != 0;
         let qos = (fixed_header & 0b0000_0110) >> 1;
@@ -46,11 +47,7 @@ impl PublishPacket {
         let topic = read_utf8_string(stream).await?;
 
         // Read packet identifier (only for QoS 1 and 2)
-        let packet_id = if qos > 0 {
-            Some(stream.read_u16().await?)
-        } else {
-            None
-        };
+        let packet_id = if qos > 0 { Some(stream.read_u16().await?) } else { None };
 
         // Calculate payload length
         let topic_len = 2 + topic.len(); // 2 bytes for length prefix + topic bytes
@@ -72,7 +69,7 @@ impl PublishPacket {
     }
 
     /// Encode the PUBLISH packet to bytes for sending
-    pub fn encode(&self) -> Vec<u8> {
+    fn encode(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
 
         // Fixed header byte: packet type (3) + flags

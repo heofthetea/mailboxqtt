@@ -1,21 +1,30 @@
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 
-use crate::{client::ClientHandle, protocol::publish_packet::PublishPacket};
+use crate::{client::ClientHandle, protocol::publish::PublishPacket};
 
 pub enum MQMessage {
-    Subscribe { client: ClientHandle, topic: String },
-    Publish { topic: String, msg: PublishPacket },
+    Subscribe {
+        client: ClientHandle,
+        topic: String,
+    },
+    Publish {
+        topic: String,
+        msg: PublishPacket,
+        sender: ClientHandle,
+    },
 }
 
 struct MessageQueue {
     subscriptions: HashMap<String, Vec<ClientHandle>>,
-    receiver: UnboundedReceiver<MQMessage>,
+    /// This is the actual Queue of this Message Queue
+    /// (Rust's thread-communication channels are based on queues)
+    receiver: Receiver<MQMessage>,
 }
 
 impl MessageQueue {
-    pub fn new(receiver: UnboundedReceiver<MQMessage>) -> MessageQueue {
+    pub fn new(receiver: Receiver<MQMessage>) -> MessageQueue {
         MessageQueue {
             subscriptions: HashMap::new(),
             receiver,
@@ -27,10 +36,10 @@ impl MessageQueue {
     async fn run(mut self) {
         while let Some(msg) = self.receiver.recv().await {
             match msg {
-                MQMessage::Publish { topic, msg } => {
-                     if let Some(subscribers) = self.subscriptions.get(&topic) {
+                MQMessage::Publish { topic, msg, sender } => {
+                    if let Some(subscribers) = self.subscriptions.get(&topic) {
                         for subscriber in subscribers {
-                            _ = subscriber.publish(msg.clone());
+                            _ = subscriber.publish(msg.clone(), sender.clone());
                         }
                     }
                 }
@@ -46,13 +55,14 @@ impl MessageQueue {
 /// Holds an Internal reference the the sender of a channel where the receiver is held by the queue
 #[derive(Clone)]
 pub struct MessageQueueHandle {
-    sender: UnboundedSender<MQMessage>,
+    sender: Sender<MQMessage>,
 }
 
 impl MessageQueueHandle {
     /// Create a new queue in its own asynchronous thread.
     pub fn start() -> MessageQueueHandle {
-        let (tx, rx) = mpsc::unbounded_channel();
+        // idk that should be enough messages let's se if it panics it panics
+        let (tx, rx) = mpsc::channel(100_000);
         let actor = MessageQueue::new(rx);
 
         tokio::spawn(async move {
@@ -61,11 +71,11 @@ impl MessageQueueHandle {
         MessageQueueHandle { sender: tx }
     }
 
-    pub fn subscribe(&self, client: ClientHandle, topic: String) {
-        _ = self.sender.send(MQMessage::Subscribe { client, topic })
+    pub async fn subscribe(&self, client: ClientHandle, topic: String) {
+        _ = self.sender.send(MQMessage::Subscribe { client, topic }).await;
     }
 
-    pub fn publish(&self, topic: String, msg: PublishPacket) {
-        _ = self.sender.send(MQMessage::Publish { topic, msg });
+    pub async fn publish(&self, topic: String, msg: PublishPacket, sender: ClientHandle) {
+        _ = self.sender.send(MQMessage::Publish { topic, msg, sender }).await;
     }
 }
