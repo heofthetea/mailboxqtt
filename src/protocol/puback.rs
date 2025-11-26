@@ -1,6 +1,6 @@
 use tokio::io::{self, AsyncReadExt};
 
-use crate::protocol::{Packet, publish::PublishPacket};
+use crate::protocol::{Packet};
 
 use super::{encode_remaining_length, read_remaining_length};
 

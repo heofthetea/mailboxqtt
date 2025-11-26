@@ -3,8 +3,6 @@ use std::io;
 
 use tokio::io::AsyncReadExt;
 
-use crate::protocol::publish::PublishPacket;
-
 pub mod connack;
 pub mod connect;
 pub mod puback;

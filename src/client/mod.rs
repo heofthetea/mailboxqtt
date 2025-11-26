@@ -19,9 +19,11 @@ use crate::{
 };
 
 /// Messages that can be sent to control the client
-pub enum ClientMessage {
+/// Aka: Which packets need to be sent to the client
+pub enum ClientCommand {
     /// Send a PUBLISH packet to this client
     Publish((PublishPacket, ClientHandle)),
+    /// Send a PUBACK to this client
     Puback(PubackPacket),
 }
 
@@ -29,7 +31,7 @@ pub enum ClientMessage {
 #[derive(Clone)]
 pub struct ClientHandle {
     pub client_id: String,
-    sender: mpsc::UnboundedSender<ClientMessage>,
+    sender: mpsc::UnboundedSender<ClientCommand>,
 }
 
 impl ClientHandle {
@@ -38,12 +40,12 @@ impl ClientHandle {
         &self,
         packet: PublishPacket,
         sender: ClientHandle,
-    ) -> Result<(), mpsc::error::SendError<ClientMessage>> {
-        self.sender.send(ClientMessage::Publish((packet, sender)))
+    ) -> Result<(), mpsc::error::SendError<ClientCommand>> {
+        self.sender.send(ClientCommand::Publish((packet, sender)))
     }
 
-    pub fn puback(&self, packet_id: u16) -> Result<(), mpsc::error::SendError<ClientMessage>> {
-        self.sender.send(ClientMessage::Puback(PubackPacket { packet_id }))
+    pub fn puback(&self, packet_id: u16) -> Result<(), mpsc::error::SendError<ClientCommand>> {
+        self.sender.send(ClientCommand::Puback(PubackPacket { packet_id }))
     }
 
     fn from_client(client: &Client) -> ClientHandle {
@@ -67,10 +69,10 @@ pub struct Client {
     reader: OwnedReadHalf,
     writer: TcpWriterHandle,
     mq: MessageQueueHandle,
-    receiver: mpsc::UnboundedReceiver<ClientMessage>,
+    receiver: mpsc::UnboundedReceiver<ClientCommand>,
     // When subscribing, we need to create new handles to this Client
     // those handles will obtain a sender by cloning this sender
-    _sender: mpsc::UnboundedSender<ClientMessage>,
+    _sender: mpsc::UnboundedSender<ClientCommand>,
     // packet_id -> sender
     pending_acks: HashMap<u16, RetainedPacket>,
     // Periodic task to go over failed messages
@@ -140,65 +142,19 @@ impl Client {
                 self.retry_packets()?;
                 self.last_retry = Instant::now();
             }
-            // Try to receive a command (non-blocking check)
-            match self.receiver.try_recv() {
-                Ok(ClientMessage::Publish((packet, sender))) => {
-                    match packet.qos {
-                        0 => {}
-                        1 => {
-                            // unwrap is fine because we know packet_id is only None for qos 0
-                            let packet_id = packet.packet_id.unwrap();
-                            // always overwrites existing entries - if the client is implemented correctly,
-                            // an actual overwrite should never exist though
-                            self.pending_acks.entry(packet_id).insert_entry(RetainedPacket {
-                                sender: sender.clone(),
-                                packet: PublishPacket {
-                                    dup: true,
-                                    ..packet.clone()
-                                },
-                                retry_count: 0,
-                                last_sent: Instant::now(),
-                            });
-                            if let Err(ifuckinghatethis) = sender.puback(packet_id) {
-                                println!("Failed to PUBLISH to {}: {:?}", sender.client_id, ifuckinghatethis);
-                                break;
-                            }
-                            println!("Sent ACK for packet {} to {}", packet_id, sender.client_id);
-                        }
-                        2 => {
-                            // I may never tbh, QoS 1 is enough for us
-                            todo!()
-                        }
-                        3.. => continue, // invalid qos -> ignore (should be filtered out on read anyway)
-                    };
-                    let bytes = packet.encode();
-                    if let Err(e) = self.writer.write_packet(&bytes) {
-                        eprintln!("Failed to send PUBLISH to client {}: {:?}", self.client_id, e);
-                        break;
-                    }
-                    continue;
-                }
-                Ok(ClientMessage::Puback(packet)) => {
-                    let bytes = packet.encode();
-                    if let Err(e) = self.writer.write_packet(&bytes) {
-                        eprintln!("Failed to send PUBACK to client {}: {:?}", self.client_id, e);
-                        break;
-                    }
-                    println!("Sent puback for {}", packet.packet_id);
-                    continue;
-                }
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    // All handles dropped, client should shut down
-                    break;
-                }
-                Err(mpsc::error::TryRecvError::Empty) => {
-                    // No commands, continue to read from stream
-                }
+            // when you're trapped in your architecture and need to commit type-theoretical war crimes
+            // in order to not redesign the entire architecture
+            match self.try_send_packet() {
+                // Error printing has already happened below, so only handle the error by killing the client's event loop
+                Err(_) => break,
+                Ok(()) => {},
             };
 
             // Polling for packets to read
-            // TODO not sure how to do this better yet, polling is not ideal
-            match timeout(Duration::from_millis(100), self.read_next_packet()).await {
+            // Only give this relatively little time, we don't want to block the loop eternally
+            // Receiving a packet also is relatively fast as we don't dispatch network messages in this thread,
+            // only call the other client's thread
+            match timeout(Duration::from_millis(10), self.try_receive_packet()).await {
                 Ok(Ok(Some(()))) => {}
                 Ok(Ok(None)) => {
                     println!("Client {} disconnected", self.client_id);
@@ -218,6 +174,7 @@ impl Client {
         Ok(())
     }
 
+    /// Attempt to resend packets that have not been acknowledged yet
     fn retry_packets(&mut self) -> io::Result<()> {
         for (&packet_id, retained) in self.pending_acks.iter_mut() {
             if retained.retry_count >= MAX_RETRIES {
@@ -249,10 +206,76 @@ impl Client {
         Ok(())
     }
 
+    /// Intentionally blocks the client's event loop when a packet is sent
+    /// However, this blocking only happens up until the inter-thread communication. Time-costly network traffic is handled
+    /// by a different thread
+    ///
+    /// Returns:
+    ///     Err(()) => Something went wrong, "panic" the client loop
+    ///     Ok(()) => Continue with the main event loop
+    fn try_send_packet(&mut self) -> Result<(), ()> {
+        match self.receiver.try_recv() {
+            Ok(ClientCommand::Publish((packet, sender))) => {
+                match packet.qos {
+                    0 => {}
+                    1 => {
+                        // unwrap is fine because we know packet_id is only None for qos 0
+                        let packet_id = packet.packet_id.unwrap();
+                        // always overwrites existing entries - if the client is implemented correctly,
+                        // an actual overwrite should never exist though
+                        self.pending_acks.entry(packet_id).insert_entry(RetainedPacket {
+                            sender: sender.clone(),
+                            packet: PublishPacket {
+                                dup: true,
+                                ..packet.clone()
+                            },
+                            retry_count: 0,
+                            last_sent: Instant::now(),
+                        });
+                        if let Err(e) = sender.puback(packet_id) {
+                            println!("Failed to PUBLISH to {}: {:?}", sender.client_id, e);
+                            return Err(());
+                        }
+                        println!("Sent ACK for packet {} to {}", packet_id, sender.client_id);
+                    }
+                    2 => {
+                        // I may never tbh, QoS 1 is enough for us
+                        todo!()
+                    }
+                    3.. => return Ok(()), // invalid qos -> ignore (should be filtered out on read anyway)
+                };
+                let bytes = packet.encode();
+                if let Err(e) = self.writer.write_packet(&bytes) {
+                    eprintln!("Failed to send PUBLISH to client {}: {:?}", self.client_id, e);
+                    return Err(());
+                }
+                return Ok(());
+            }
+            Ok(ClientCommand::Puback(packet)) => {
+                let bytes = packet.encode();
+                if let Err(e) = self.writer.write_packet(&bytes) {
+                    eprintln!("Failed to send PUBACK to client {}: {:?}", self.client_id, e);
+                    return Err(());
+                }
+                println!("Sent puback for {}", packet.packet_id);
+                return Ok(());
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                // All handles dropped, client should shut down
+                return Err(());
+            }
+            Err(mpsc::error::TryRecvError::Empty) => {
+                // No commands, continue to read from stream
+            }
+        };
+        Ok(())
+    }
+
     /// Read and handle the next packet from the client
-    /// Returns Ok(Some(())) if packet was handled, Ok(None) if connection closed
-    /// and Err(_) when anything fails
-    async fn read_next_packet(&mut self) -> io::Result<Option<()>> {
+    /// This is the part of the
+    /// Returns Ok(Some(())) if packet was handled, Ok(None) if connection closed and Err(_) when anything fails
+    /// Produces side-effects in the sense that it immediately handles received packets by talking to the Message Queue
+    async fn try_receive_packet(&mut self) -> io::Result<Option<()>> {
         // Read the first byte to determine packet type
         // The fixed header may contain more information based on the type of packet, so we retain it and pass it
         // to the respective packer parserssender
@@ -270,6 +293,7 @@ impl Client {
                 let packet = PublishPacket::read(&mut self.reader, fixed_header).await?;
 
                 println!("Client {} published to topic '{}'", self.client_id, packet.topic);
+                // forward the publish packet
                 self.mq
                     .publish(packet.topic.clone(), packet, ClientHandle::from_client(self))
                     .await;

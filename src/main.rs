@@ -1,3 +1,4 @@
+use clap::Parser;
 use tokio::net::TcpListener;
 
 use crate::{client::Client, message_queue::MessageQueueHandle};
@@ -6,15 +7,22 @@ mod client;
 mod message_queue;
 mod protocol;
 
+#[derive(Parser)]
+struct Args {
+    #[arg(env = "SOCKET_ADDR", default_value = "127.0.0.1:1883")]
+    address: String
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    println!("Starting mailboxqtt broker on 127.0.0.1:1883");
+    let args = Args::parse();
+    println!("Starting mailboxqtt broker on {}", args.address);
 
     // Create one shared message queue for the entire broker
     let message_queue = MessageQueueHandle::start();
 
     // Listen for incoming connections
-    let listener = TcpListener::bind("127.0.0.1:1883").await?;
+    let listener = TcpListener::bind(args.address).await?;
 
     while let Ok((stream, addr)) = listener.accept().await {
         println!("New client connected from: {:?}", addr);

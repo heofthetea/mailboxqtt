@@ -36,16 +36,15 @@ impl MessageQueue {
     async fn run(mut self) {
         while let Some(msg) = self.receiver.recv().await {
             match msg {
-                MQMessage::Publish { topic, msg, sender } => {
-                    if let Some(subscribers) = self.subscriptions.get(&topic) {
-                        for subscriber in subscribers {
-                            _ = subscriber.publish(msg.clone(), sender.clone());
-                        }
-                    }
-                }
-                MQMessage::Subscribe { client, topic } => {
-                    self.subscriptions.entry(topic).or_default().push(client);
-                }
+                MQMessage::Publish { topic, msg, sender } => self.handle_publish(topic, msg, sender),
+                MQMessage::Subscribe { client, topic } => self.subscriptions.entry(topic).or_default().push(client),
+            }
+        }
+    }
+    fn handle_publish(&self, topic: String, msg: PublishPacket, sender: ClientHandle) {
+        if let Some(subscribers) = self.subscriptions.get(&topic) {
+            for subscriber in subscribers {
+                _ = subscriber.publish(msg.clone(), sender.clone());
             }
         }
     }
@@ -63,10 +62,11 @@ impl MessageQueueHandle {
     pub fn start() -> MessageQueueHandle {
         // idk that should be enough messages let's se if it panics it panics
         let (tx, rx) = mpsc::channel(100_000);
-        let actor = MessageQueue::new(rx);
+        let queue = MessageQueue::new(rx);
 
+        // thread-pin the message queue
         tokio::spawn(async move {
-            actor.run().await;
+            queue.run().await;
         });
         MessageQueueHandle { sender: tx }
     }
