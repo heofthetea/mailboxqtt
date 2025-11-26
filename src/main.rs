@@ -7,6 +7,9 @@ mod client;
 mod message_queue;
 mod protocol;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Parser)]
 struct Args {
     #[arg(env = "SOCKET_ADDR", default_value = "127.0.0.1:1883")]

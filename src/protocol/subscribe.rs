@@ -28,7 +28,7 @@ pub struct Subscription {
     pub topic_filter: String,
 
     /// Requested Quality of Service level (0, 1, or 2)
-    /// TODO For now, we ignore this and always use QoS 0
+    /// TODO uh how does this work?
     #[allow(dead_code)]
     pub qos: u8,
 }

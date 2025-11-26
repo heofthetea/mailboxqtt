@@ -31,7 +31,7 @@ pub enum ClientCommand {
 #[derive(Clone)]
 pub struct ClientHandle {
     pub client_id: String,
-    sender: mpsc::UnboundedSender<ClientCommand>,
+    pub(crate) sender: mpsc::UnboundedSender<ClientCommand>,
 }
 
 impl ClientHandle {
