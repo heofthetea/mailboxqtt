@@ -8,14 +8,17 @@ Created as part of an IoT lecture at DHBW.
 - [x] connections
 - [x] publishing messages to topics
 - [x] subscribing to topics
-- [ ] QoS
+- [x] QoS 1
+- [x] Wildcards
+- [ ] QoS 2
+- [ ] Auth
+
 
 ## Example Usage
 Start the broker with:
 ```
 cargo run
 ```
-(I have not created any deployment yet but I'll create a docker at some point)
 
 Then use an mqtt client like [Mosquitto](https://mosquitto.org/download/) to communicate with the broker:
 ```bash
@@ -26,6 +29,18 @@ Then, in another terminal:
 mosquitto_pub -h 127.0.0.1 -p 1883 -t test -m "hello world" -i "test-pub"
 ```
 You should see the message "hello world" appear in your subscriber's terminal.
+
+## Docker
+A docker image of this is available at [docker hub](https://hub.docker.com/repository/docker/heofthetea/mailboxqtt/).
+Usage:
+```
+docker run -p 1883:1883 --name mailboxqtt heofthetea/mailboxqtt 
+```
+
+### Environment variables
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SOCKET_ADDR` | `127.0.0.1:1883` | The address and port the broker listens on |
 
 
 ## Architecture
