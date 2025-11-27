@@ -35,18 +35,18 @@ fn test_exact_topic_subscribe() {
 
     // Test get_subscribers
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "client1");
 
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "humidity"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "humidity"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "client2");
 
     // Non-existent topic should return empty
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "pressure"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "pressure"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 0);
 }
 
@@ -66,18 +66,18 @@ fn test_multi_level_wildcard_subscribe() {
 
     // Test get_subscribers - should match any topic under sensor/
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "wildcard_client");
 
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "humidity", "living"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "humidity", "living"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "wildcard_client");
 
     // Should NOT match topics not under sensor/
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "temperature"], &mut subscribers);
+    tree.get_subscribers(&["home", "temperature"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 0);
 }
 
@@ -94,27 +94,67 @@ fn test_single_level_wildcard_subscribe() {
     let sensor_node = tree.children.get("sensor").unwrap();
     assert_eq!(sensor_node.subscribers_single_wildcard.len(), 1);
     assert_eq!(sensor_node.subscribers_single_wildcard[0].0.client_id, "plus_client");
-    assert_eq!(sensor_node.subscribers_single_wildcard[0].1, vec!["temperature"]);
+    assert_eq!(sensor_node.subscribers_single_wildcard[0].1, vec!["+", "temperature"]);
 
     // Test get_subscribers - should match sensor/<anything>/temperature
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "bedroom", "temperature"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "bedroom", "temperature"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "plus_client");
 
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "kitchen", "temperature"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "kitchen", "temperature"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "plus_client");
 
     // Should NOT match wrong depth
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 0);
 
     // Should NOT match wrong ending
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "bedroom", "humidity"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "bedroom", "humidity"], &mut subscribers, Vec::new());
+    assert_eq!(subscribers.len(), 0);
+
+}
+#[test]
+fn test_double_single_level_wildcard() {
+    let mut tree = TopicTree::new();
+    let client2 = create_mock_client("double_plus_client");
+    tree.subscribe(client2.clone(), &["home", "+", "+", "status"]);
+
+    // Check structure for home node
+    assert_eq!(tree.children.len(), 1);
+    let home_node = tree.children.get("home").unwrap();
+    assert_eq!(home_node.subscribers_single_wildcard.len(), 1);
+    assert_eq!(home_node.subscribers_single_wildcard[0].0.client_id, "double_plus_client");
+    assert_eq!(home_node.subscribers_single_wildcard[0].1, vec!["+", "+", "status"]);
+
+    // Test get_subscribers - should match home/<anything>/<anything>/status
+    let mut subscribers = Vec::new();
+    tree.get_subscribers(&["home", "bedroom", "light", "status"], &mut subscribers, Vec::new());
+    assert_eq!(subscribers.len(), 1);
+    assert_eq!(subscribers[0].client_id, "double_plus_client");
+
+    let mut subscribers = Vec::new();
+    tree.get_subscribers(&["home", "kitchen", "temperature", "status"], &mut subscribers, Vec::new());
+    assert_eq!(subscribers.len(), 1);
+    assert_eq!(subscribers[0].client_id, "double_plus_client");
+
+    // Should NOT match wrong depth (too short)
+    let mut subscribers = Vec::new();
+    tree.get_subscribers(&["home", "bedroom", "status"], &mut subscribers, Vec::new());
+    assert_eq!(subscribers.len(), 0);
+
+    // Should NOT match wrong depth (too long)
+    let mut subscribers = Vec::new();
+    tree.get_subscribers(&["home", "bedroom", "light", "sensor", "status"], &mut subscribers, Vec::new());
+    assert_eq!(subscribers.len(), 0);
+
+    // Should NOT match wrong ending
+    let mut subscribers = Vec::new();
+    tree.get_subscribers(&["home", "bedroom", "light", "value"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 0);
 }
 
@@ -145,7 +185,7 @@ fn test_mixed_subscriptions() {
     // Test get_subscribers
     // Exact match should get exact client + wildcard (home/#) + plus (home/+/temp)
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "living", "temp"], &mut subscribers);
+    tree.get_subscribers(&["home", "living", "temp"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 3); // exact + wildcard + plus
     let client_ids: Vec<&str> = subscribers.iter().map(|c| c.client_id.as_str()).collect();
     assert!(client_ids.contains(&"exact"));
@@ -154,7 +194,7 @@ fn test_mixed_subscriptions() {
 
     // Test + wildcard with new topic (that didn't exist at subscribe time)
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "bedroom", "temp"], &mut subscribers);
+    tree.get_subscribers(&["home", "bedroom", "temp"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 2); // wildcard + plus (but NOT exact)
     let client_ids: Vec<&str> = subscribers.iter().map(|c| c.client_id.as_str()).collect();
     assert!(client_ids.contains(&"wildcard"));
@@ -162,7 +202,7 @@ fn test_mixed_subscriptions() {
 
     // Different topic (not matching +/temp pattern) should only get wildcard
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "bedroom", "humidity"], &mut subscribers);
+    tree.get_subscribers(&["home", "bedroom", "humidity"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "wildcard");
 }
@@ -188,7 +228,7 @@ fn test_multiple_clients_same_topic() {
 
     // Test get_subscribers - all three should be returned
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["l1", "l2"], &mut subscribers);
+    tree.get_subscribers(&["l1", "l2"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 3);
     let client_ids: Vec<&str> = subscribers.iter().map(|c| c.client_id.as_str()).collect();
     assert!(client_ids.contains(&"client1"));
@@ -210,17 +250,17 @@ fn test_root_level_wildcard() {
 
     // Test get_subscribers - should match any topic
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers);
+    tree.get_subscribers(&["sensor", "temperature"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "catch_all");
 
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "living", "humidity"], &mut subscribers);
+    tree.get_subscribers(&["home", "living", "humidity"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "catch_all");
 
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["anything"], &mut subscribers);
+    tree.get_subscribers(&["anything"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "catch_all");
 }
@@ -243,7 +283,7 @@ fn test_complex_wildcard_combinations() {
 
     // Test exact match: should match exact, single (+), multi (bedroom/#), nested_multi (home/#), root_catch_all (#)
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "bedroom", "temperature", "sensor1"], &mut subscribers);
+    tree.get_subscribers(&["home", "bedroom", "temperature", "sensor1"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 5);
     let ids: Vec<&str> = subscribers.iter().map(|c| c.client_id.as_str()).collect();
     assert!(ids.contains(&"exact"));
@@ -254,7 +294,7 @@ fn test_complex_wildcard_combinations() {
 
     // Test different room: should match single (+), nested_multi (home/#), root_catch_all (#)
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "kitchen", "temperature", "sensor1"], &mut subscribers);
+    tree.get_subscribers(&["home", "kitchen", "temperature", "sensor1"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 3);
     let ids: Vec<&str> = subscribers.iter().map(|c| c.client_id.as_str()).collect();
     assert!(ids.contains(&"single"));
@@ -263,7 +303,7 @@ fn test_complex_wildcard_combinations() {
 
     // Test different metric in bedroom: should match multi (bedroom/#), nested_multi (home/#), root_catch_all (#)
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["home", "bedroom", "humidity"], &mut subscribers);
+    tree.get_subscribers(&["home", "bedroom", "humidity"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 3);
     let ids: Vec<&str> = subscribers.iter().map(|c| c.client_id.as_str()).collect();
     assert!(ids.contains(&"multi"));
@@ -272,7 +312,36 @@ fn test_complex_wildcard_combinations() {
 
     // Test completely different topic: should only match root_catch_all (#)
     let mut subscribers = Vec::new();
-    tree.get_subscribers(&["office", "desk", "light"], &mut subscribers);
+    tree.get_subscribers(&["office", "desk", "light"], &mut subscribers, Vec::new());
     assert_eq!(subscribers.len(), 1);
     assert_eq!(subscribers[0].client_id, "root_catch_all");
+}
+
+#[test]
+fn test_leading_slash_topic_wildcard_matching() {
+    // Tests the MQTT 3.1.1 spec edge case:
+    // "/finance" matches "+/+" and "/+", but not "+"
+    // This is because "/finance" has two levels: "" (empty) and "finance"
+    // OH MY GOD I FUCKING DID IT CORRECTLY HOLY SHIT
+
+    let mut tree = TopicTree::new();
+    let client_plus = create_mock_client("single_plus");
+    let client_plus_plus = create_mock_client("plus_plus");
+    let client_slash_plus = create_mock_client("slash_plus");
+
+    // Subscribe to three different patterns
+    tree.subscribe(client_plus.clone(), &["+"]);           // Should NOT match
+    tree.subscribe(client_plus_plus.clone(), &["+", "+"]);  // Should match
+    tree.subscribe(client_slash_plus.clone(), &["", "+"]);  // Should match
+
+    // Test publishing to "/finance" (which is ["", "finance"] as topic levels)
+    let mut subscribers = Vec::new();
+    tree.get_subscribers(&["", "finance"], &mut subscribers, Vec::new());
+
+    // Should match "+/+" and "/+" but NOT "+"
+    assert_eq!(subscribers.len(), 2);
+    let client_ids: Vec<&str> = subscribers.iter().map(|c| c.client_id.as_str()).collect();
+    assert!(client_ids.contains(&"plus_plus"), "'+/+' should match '/finance'");
+    assert!(client_ids.contains(&"slash_plus"), "'/+' should match '/finance'");
+    assert!(!client_ids.contains(&"single_plus"), "'+' should NOT match '/finance'");
 }
