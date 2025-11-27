@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, VecDeque}};
+use std::collections::{HashMap, VecDeque};
 
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
@@ -14,51 +14,9 @@ pub enum MQMessage {
         msg: PublishPacket,
         sender: ClientHandle,
     },
-}
-
-struct MessageQueue {
-    subscriptions: TopicTree,
-    /// This is the actual Queue of this Message Queue
-    /// (Rust's thread-communication channels are based on queues)
-    receiver: Receiver<MQMessage>,
-}
-
-impl MessageQueue {
-    pub fn new(receiver: Receiver<MQMessage>) -> MessageQueue {
-        MessageQueue {
-            subscriptions: TopicTree::new(),
-            receiver,
-        }
-    }
-
-    /// Primary routine for the message queue.
-    /// Awaits messages sent in the unbounded channel and handles them appropriately
-    async fn run(mut self) {
-        while let Some(msg) = self.receiver.recv().await {
-            match msg {
-                MQMessage::Publish { topic, msg, sender } => self.handle_publish(topic, msg, sender),
-                MQMessage::Subscribe { client, topic } => self.handle_subscribe(client, topic),
-            }
-        }
-    }
-    fn handle_publish(&self, topic: String, msg: PublishPacket, sender: ClientHandle) {
-        for subscriber in self.get_subscribers(&topic) {
-            _ = subscriber.publish(msg.clone(), sender.clone());
-        }
-    }
-
-    fn get_subscribers<'a>(&'a self, topic: &str) -> Vec<ClientHandle> {
-        let mut subscribers: Vec<&'a ClientHandle> = Vec::new();
-        let topic_nodes: Vec<&str> = topic.split('/').collect();
-        self.subscriptions
-            .get_subscribers(&topic_nodes, &mut subscribers, Vec::new());
-        subscribers.iter().cloned().cloned().collect()
-    }
-
-    fn handle_subscribe(&mut self, client: ClientHandle, topic: String) {
-        let topic_nodes: Vec<&str> = topic.split('/').collect();
-        self.subscriptions.subscribe(client, &topic_nodes);
-    }
+    Disconnect {
+        client: ClientHandle,
+    },
 }
 
 /// Handle for inter-thread communication with the Message Queue
@@ -83,11 +41,71 @@ impl MessageQueueHandle {
     }
 
     pub async fn subscribe(&self, client: ClientHandle, topic: String) {
-        _ = self.sender.send(MQMessage::Subscribe { client, topic }).await;
+        match self.sender.send(MQMessage::Subscribe { client: client.clone(), topic }).await {
+            Ok(_) => (),
+            Err(_) => self.disconnect(client).await,
+        }
     }
 
     pub async fn publish(&self, topic: String, msg: PublishPacket, sender: ClientHandle) {
-        _ = self.sender.send(MQMessage::Publish { topic, msg, sender }).await;
+        match self.sender.send(MQMessage::Publish { topic, msg, sender: sender.clone() }).await {
+            Ok(_) => (),
+            Err(_) => self.disconnect(sender).await,
+        }
+    }
+
+    pub async fn disconnect(&self, client: ClientHandle) {
+        _ = self.sender.send(MQMessage::Disconnect { client }).await;
+    }
+}
+
+struct MessageQueue {
+    subscriptions: TopicTree,
+    /// This is the actual Queue of this Message Queue
+    /// (Rust's thread-communication channels are based on queues)
+    receiver: Receiver<MQMessage>,
+}
+
+impl MessageQueue {
+    pub fn new(receiver: Receiver<MQMessage>) -> MessageQueue {
+        MessageQueue {
+            subscriptions: TopicTree::new(),
+            receiver,
+        }
+    }
+
+    /// Primary routine for the message queue.
+    /// Awaits messages sent in the unbounded channel and handles them appropriately
+    async fn run(mut self) {
+        while let Some(msg) = self.receiver.recv().await {
+            match msg {
+                MQMessage::Publish { topic, msg, sender } => self.handle_publish(topic, msg, sender),
+                MQMessage::Subscribe { client, topic } => self.handle_subscribe(client, topic),
+                MQMessage::Disconnect { client } => self.handle_disconnect(client),
+            }
+        }
+    }
+    fn handle_publish(&self, topic: String, msg: PublishPacket, sender: ClientHandle) {
+        for subscriber in self.get_subscribers(&topic) {
+            _ = subscriber.publish(msg.clone(), sender.clone());
+        }
+    }
+
+    fn get_subscribers<'a>(&'a self, topic: &str) -> Vec<ClientHandle> {
+        let mut subscribers: Vec<&'a ClientHandle> = Vec::new();
+        let topic_nodes: Vec<&str> = topic.split('/').collect();
+        self.subscriptions
+            .get_subscribers(&topic_nodes, &mut subscribers, Vec::new());
+        subscribers.iter().cloned().cloned().collect()
+    }
+
+    fn handle_subscribe(&mut self, client: ClientHandle, topic: String) {
+        let topic_nodes: Vec<&str> = topic.split('/').collect();
+        self.subscriptions.subscribe(client, &topic_nodes);
+    }
+
+    fn handle_disconnect(&mut self, client: ClientHandle) {
+        self.subscriptions.purge(&client);
     }
 }
 
@@ -214,7 +232,7 @@ impl TopicTree {
             }
         }
         for (subtopic, subwilcard) in topic.iter().zip(wildcard) {
-            if subtopic != && subwilcard {
+            if subtopic != &&subwilcard {
                 if subwilcard != "+" {
                     return false;
                 }
@@ -226,5 +244,16 @@ impl TopicTree {
         }
 
         true
+    }
+
+    /// Recursively remove all subscriptions of `to_remove`
+    fn purge(&mut self, to_remove: &ClientHandle) {
+        self.subscribers_exact.retain(|client| client != to_remove);
+        self.subscribers_single_wildcard
+            .retain(|(client, _)| client != to_remove);
+        self.subscribers_multi_wildcard.retain(|client| client != to_remove);
+        for (_, child) in self.children.iter_mut() {
+            child.purge(to_remove);
+        }
     }
 }

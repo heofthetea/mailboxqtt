@@ -30,8 +30,15 @@ pub enum ClientCommand {
 /// Handle for communicating with a client
 #[derive(Clone)]
 pub struct ClientHandle {
+    // According to the MQTT spec this should be able to serve as a primary identification
     pub client_id: String,
     pub(crate) sender: mpsc::UnboundedSender<ClientCommand>,
+}
+
+impl PartialEq for ClientHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.client_id == other.client_id
+    }
 }
 
 impl ClientHandle {
@@ -127,7 +134,7 @@ impl Client {
             }
         });
 
-        Ok(ClientHandle { client_id, sender: tx })
+        Ok(ClientHandle { client_id, sender: tx})
     }
 
     /// Main event loop of the client
@@ -147,7 +154,7 @@ impl Client {
             match self.try_send_packet() {
                 // Error printing has already happened below, so only handle the error by killing the client's event loop
                 Err(_) => break,
-                Ok(()) => {},
+                Ok(()) => {}
             };
 
             // Polling for packets to read
@@ -170,7 +177,8 @@ impl Client {
                 }
             };
         }
-
+        // disconnect the client once its loop finishes
+        self.mq.disconnect(ClientHandle::from_client(&self)).await;
         Ok(())
     }
 
@@ -292,7 +300,7 @@ impl Client {
                 // PUBLISH
                 let packet = PublishPacket::read(&mut self.reader, fixed_header).await?;
 
-                println!("Client {} published to topic '{}'", self.client_id, packet.topic);
+                println!("Client {} published to '{}' (id {})", self.client_id, packet.topic, packet.packet_id.unwrap_or(0));
                 // forward the publish packet
                 self.mq
                     .publish(packet.topic.clone(), packet, ClientHandle::from_client(self))
@@ -344,7 +352,6 @@ impl Client {
             12 => {
                 // PINGREQ
                 let _remaining_length = self.reader.read_u8().await?; // Should be 0
-                println!("Client {} sent PINGREQ", self.client_id);
 
                 // Send PINGRESP (0xD0, 0x00)
                 let pingresp = vec![0xD0, 0x00];
@@ -354,7 +361,7 @@ impl Client {
             14 => {
                 // DISCONNECT
                 let _remaining_length = self.reader.read_u8().await?; // Should be 0
-                println!("Client {} sent DISCONNECT", self.client_id);
+                self.mq.disconnect(ClientHandle::from_client(self)).await;
                 Ok(None)
             }
             _ => {

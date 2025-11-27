@@ -28,7 +28,6 @@ async fn main() -> std::io::Result<()> {
     let listener = TcpListener::bind(args.address).await?;
 
     while let Ok((stream, addr)) = listener.accept().await {
-        println!("New client connected from: {:?}", addr);
 
         // Clone the message queue handle (cheap operation)
         let mq = message_queue.clone();
@@ -37,7 +36,7 @@ async fn main() -> std::io::Result<()> {
         tokio::spawn(async move {
             match Client::start(stream, mq).await {
                 Ok(client_handle) => {
-                    println!("Client {} successfully connected", client_handle.client_id);
+                    println!("Client {} successfully connected from: {:?} ", client_handle.client_id, addr);
                 }
                 Err(e) => {
                     eprintln!("Failed to initialize client: {:?}", e);
