@@ -1,3 +1,4 @@
+use log::error;
 use tokio::{
     io::{AsyncWriteExt},
     net::tcp::OwnedWriteHalf as WriteTcpStream,
@@ -29,7 +30,7 @@ impl TcpWriter {
             match msg {
                 TcpWriterMsg::WritePacket(packet) => {
                     if let Err(e) = self.stream.write_all(&packet).await {
-                        eprintln!("Failed to write packet: {:?}", e);
+                        error!("Failed to write packet: {:?}", e);
                         break; // Connection is broken, exit
                     }
                 }

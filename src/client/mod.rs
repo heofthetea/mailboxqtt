@@ -2,6 +2,7 @@ pub mod tcp_writer;
 
 use std::{collections::HashMap, time::Duration};
 
+use log::{debug, error, info, warn};
 use tokio::{
     io::{self, AsyncReadExt},
     net::{TcpStream, tcp::OwnedReadHalf},
@@ -130,7 +131,7 @@ impl Client {
         // Start the client's event loop
         tokio::spawn(async move {
             if let Err(e) = client.run().await {
-                eprintln!("Client {} error: {:?}", client_id_for_spawn, e);
+                error!("Client {} error: {:?}", client_id_for_spawn, e);
             }
         });
 
@@ -164,11 +165,11 @@ impl Client {
             match timeout(Duration::from_millis(10), self.try_receive_packet()).await {
                 Ok(Ok(Some(()))) => {}
                 Ok(Ok(None)) => {
-                    println!("Client {} disconnected", self.client_id);
+                    info!("Client {} disconnected", self.client_id);
                     break;
                 }
                 Ok(Err(e)) => {
-                    eprintln!("Client {} read error: {:?}", self.client_id, e);
+                    error!("Client {} read error: {:?}", self.client_id, e);
                     break;
                 }
                 Err(_) => {
@@ -186,7 +187,7 @@ impl Client {
     fn retry_packets(&mut self) -> io::Result<()> {
         for (&packet_id, retained) in self.pending_acks.iter_mut() {
             if retained.retry_count >= MAX_RETRIES {
-                eprintln!(
+                error!(
                     "{} failed to ACK packet {} after {} retries, dropped",
                     self.client_id, packet_id, MAX_RETRIES
                 );
@@ -197,7 +198,7 @@ impl Client {
                 continue;
             }
 
-            println!(
+            warn!(
                 "Retrying packet {} to client {} (attempt {}/{})",
                 packet_id,
                 self.client_id,
@@ -241,10 +242,10 @@ impl Client {
                             last_sent: Instant::now(),
                         });
                         if let Err(e) = sender.puback(packet_id) {
-                            println!("Failed to PUBLISH to {}: {:?}", sender.client_id, e);
+                            error!("Failed to PUBLISH to {}: {:?}", sender.client_id, e);
                             return Err(());
                         }
-                        println!("Sent ACK for packet {} to {}", packet_id, sender.client_id);
+                        debug!("Sent ACK for packet {} to {}", packet_id, sender.client_id);
                     }
                     2 => {
                         // I may never tbh, QoS 1 is enough for us
@@ -254,7 +255,7 @@ impl Client {
                 };
                 let bytes = packet.encode();
                 if let Err(e) = self.writer.write_packet(&bytes) {
-                    eprintln!("Failed to send PUBLISH to client {}: {:?}", self.client_id, e);
+                    error!("Failed to send PUBLISH to client {}: {:?}", self.client_id, e);
                     return Err(());
                 }
                 return Ok(());
@@ -262,10 +263,10 @@ impl Client {
             Ok(ClientCommand::Puback(packet)) => {
                 let bytes = packet.encode();
                 if let Err(e) = self.writer.write_packet(&bytes) {
-                    eprintln!("Failed to send PUBACK to client {}: {:?}", self.client_id, e);
+                    error!("Failed to send PUBACK to client {}: {:?}", self.client_id, e);
                     return Err(());
                 }
-                println!("Sent puback for {}", packet.packet_id);
+                debug!("Sent puback for {}", packet.packet_id);
                 return Ok(());
             }
             Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -300,7 +301,7 @@ impl Client {
                 // PUBLISH
                 let packet = PublishPacket::read(&mut self.reader, fixed_header).await?;
 
-                println!("Client {} published to '{}' (id {})", self.client_id, packet.topic, packet.packet_id.unwrap_or(0));
+                info!("Client {} published to '{}' (id {})", self.client_id, packet.topic, packet.packet_id.unwrap_or(0));
                 // forward the publish packet
                 self.mq
                     .publish(packet.topic.clone(), packet, ClientHandle::from_client(self))
@@ -310,7 +311,7 @@ impl Client {
             4 => {
                 // PUBACK
                 let packet = PubackPacket::read(&mut self.reader, fixed_header).await?;
-                println!(
+                debug!(
                     "Client {} acknowledged publish of {}",
                     &self.client_id, &packet.packet_id
                 );
@@ -328,14 +329,14 @@ impl Client {
                     subscriptions,
                 } = SubscribePacket::read(&mut self.reader, fixed_header).await?;
 
-                println!(
+                info!(
                     "Client {} subscribing to {} topics",
                     self.client_id,
                     subscriptions.len()
                 );
 
                 for sub in &subscriptions {
-                    println!("  - {}", sub.topic_filter);
+                    info!("  - {}", sub.topic_filter);
                     let handle = ClientHandle::from_client(self);
                     self.mq.subscribe(handle, sub.topic_filter.clone()).await;
                 }
@@ -365,7 +366,7 @@ impl Client {
                 Ok(None)
             }
             _ => {
-                eprintln!("Client {} sent unknown packet type: {}", self.client_id, packet_type);
+                error!("Client {} sent unknown packet type: {}", self.client_id, packet_type);
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Unknown packet type: {}", packet_type),

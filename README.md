@@ -17,8 +17,9 @@ Created as part of an IoT lecture at DHBW.
 ## Example Usage
 Start the broker with:
 ```
-cargo run
+RUST_LOG=info cargo run
 ```
+(leave the RUST_LOG out if you don't want logs lel)
 
 Then use an mqtt client like [Mosquitto](https://mosquitto.org/download/) to communicate with the broker:
 ```bash
@@ -37,10 +38,16 @@ Usage:
 docker run -p 1883:1883 --name mailboxqtt heofthetea/mailboxqtt 
 ```
 
+### Building
+Build a docker image using the build script `build.sh`.
+
+> **Warning**: This is a multi-platform build using docker buildx, so ensure you have docker buildx setup correctly (see [here](https://hub.docker.com/r/tonistiigi/binfmt) for some more info)
+
 ### Environment variables
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SOCKET_ADDR` | `127.0.0.1:1883` | The address and port the broker listens on |
+| `RUST_LOG` | None | Log level configuration (e.g., `info`, `debug`, `error`) |
 
 
 ## Architecture

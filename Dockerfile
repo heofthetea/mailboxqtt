@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.91 as builder
+FROM rust:1.91 AS builder
 
 WORKDIR /mailboxqtt
 
@@ -18,6 +18,7 @@ WORKDIR /mailboxqtt
 # Copy the binary from builder
 COPY --from=builder /mailboxqtt/target/release/mailboxqtt /mailboxqtt/mailboxqtt
 ENV SOCKET_ADDR=0.0.0.0:1883
+ENV RUST_LOG=debug
 
 # Expose the port
 EXPOSE 1883

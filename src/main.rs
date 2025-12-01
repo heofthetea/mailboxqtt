@@ -1,4 +1,5 @@
 use clap::Parser;
+use log::{error, info};
 use tokio::net::TcpListener;
 
 use crate::{client::Client, message_queue::MessageQueueHandle};
@@ -18,8 +19,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    env_logger::init();
+    
     let args = Args::parse();
-    println!("Starting mailboxqtt broker on {}", args.address);
+    info!("Starting mailboxqtt broker on {}", args.address);
 
     // Create one shared message queue for the entire broker
     let message_queue = MessageQueueHandle::start();
@@ -36,10 +39,10 @@ async fn main() -> std::io::Result<()> {
         tokio::spawn(async move {
             match Client::start(stream, mq).await {
                 Ok(client_handle) => {
-                    println!("Client {} successfully connected from: {:?} ", client_handle.client_id, addr);
+                    info!("Client {} successfully connected from: {:?} ", client_handle.client_id, addr);
                 }
                 Err(e) => {
-                    eprintln!("Failed to initialize client: {:?}", e);
+                    error!("Failed to initialize client: {:?}", e);
                 }
             }
         });
